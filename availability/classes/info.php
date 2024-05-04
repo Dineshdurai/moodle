@@ -49,6 +49,9 @@ abstract class info {
     /** @var tree Availability configuration, decoded from JSON; null if unset */
     protected $availabilitytree;
 
+    /** @var array The groups the current user belongs to. */
+    protected $groups;
+
     /** @var array|null Array of information about current restore if any */
     protected static $restoreinfo = null;
 
@@ -65,6 +68,7 @@ abstract class info {
         $this->course = $course;
         $this->visible = (bool)$visible;
         $this->availability = $availability;
+        $this->groups = null;
     }
 
     /**
@@ -81,7 +85,7 @@ abstract class info {
      *
      * @return \context Context for this item
      */
-    public abstract function get_context();
+    abstract public function get_context();
 
     /**
      * Obtains the modinfo associated with this availability information.
@@ -298,6 +302,7 @@ abstract class info {
             // So instead use the numbers (cmid) from the tag.
             $htmlname = preg_replace('~[^0-9]~', '', $name);
         }
+        $htmlname = html_to_text($htmlname, 75, false);
         $info = 'Error processing availability data for &lsquo;' . $htmlname
                  . '&rsquo;: ' . s($e->a);
         debugging($info, DEBUG_DEVELOPER);
@@ -377,7 +382,7 @@ abstract class info {
      *
      * @return string Name of item
      */
-    protected abstract function get_thing_name();
+    abstract protected function get_thing_name();
 
     /**
      * Stores an updated availability tree JSON structure into the relevant
@@ -385,7 +390,7 @@ abstract class info {
      *
      * @param string $availabilty New JSON value
      */
-    protected abstract function set_in_database($availabilty);
+    abstract protected function set_in_database($availabilty);
 
     /**
      * In rare cases the system may want to change all references to one ID
@@ -661,7 +666,7 @@ abstract class info {
      *
      * @return string Name of capability used to view hidden items of this type
      */
-    protected abstract function get_view_hidden_capability();
+    abstract protected function get_view_hidden_capability();
 
     /**
      * Obtains SQL that returns a list of enrolled users that has been filtered
@@ -740,11 +745,14 @@ abstract class info {
         $info = preg_replace_callback('~<AVAILABILITY_CMNAME_([0-9]+)/>~',
                 function($matches) use($modinfo, $context) {
                     $cm = $modinfo->get_cm($matches[1]);
-                    if ($cm->has_view() and $cm->get_user_visible()) {
+                    $modulename = format_string($cm->get_name(), true, ['context' => $context]);
+                    // We make sure that we add a data attribute to the name so we can change it later if the
+                    // original module name changes.
+                    if ($cm->has_view() && $cm->get_user_visible()) {
                         // Help student by providing a link to the module which is preventing availability.
-                        return \html_writer::link($cm->get_url(), format_string($cm->get_name(), true, ['context' => $context]));
+                        return \html_writer::link($cm->get_url(), $modulename, ['data-cm-name-for' => $cm->id]);
                     } else {
-                        return format_string($cm->get_name(), true, ['context' => $context]);
+                        return \html_writer::span($modulename, '', ['data-cm-name-for' => $cm->id]);
                     }
                 }, $info);
         $info = preg_replace_callback('~<AVAILABILITY_FORMAT_STRING>(.*?)</AVAILABILITY_FORMAT_STRING>~s',
@@ -795,5 +803,29 @@ abstract class info {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns groups that the current user belongs to on the course. Note: If not already
+     * available, this may make a database query.
+     *
+     * This will include groups the user is not allowed to see themselves, so check visibility
+     * before displaying groups to the user.
+     *
+     * @param int $groupingid Grouping ID or 0 (default) for all groups
+     * @return int[] Array of int (group id) => int (same group id again); empty array if none
+     */
+    public function get_groups(int $groupingid = 0): array {
+        global $USER;
+        if (is_null($this->groups)) {
+            $allgroups = groups_get_user_groups($this->course->id, $USER->id, true);
+            $this->groups = $allgroups;
+        } else {
+            $allgroups = $this->groups;
+        }
+        if (!isset($allgroups[$groupingid])) {
+            return [];
+        }
+        return $allgroups[$groupingid];
     }
 }

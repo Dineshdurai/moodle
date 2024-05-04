@@ -710,8 +710,8 @@ class lib_test extends \advanced_testcase {
         $cohort2 = $this->getDataGenerator()->create_cohort();
 
         // Test cohort_get_cohort.
-        $result = cohort_get_cohort($cohort1->id, \context_system::instance(), true);
-        $this->assertObjectHasAttribute('customfields', $result);
+        $result = cohort_get_cohort($cohort1->id, $coursectx, true);
+        $this->assertObjectHasProperty('customfields', $result);
         $this->assertCount(1, $result->customfields);
         $field = reset($result->customfields);
         $this->assertInstanceOf(data_controller::class, $field);
@@ -719,15 +719,15 @@ class lib_test extends \advanced_testcase {
         $this->assertEquals('Test value 1', $field->get_value());
 
         // Test custom fields are not returned if not needed.
-        $result = cohort_get_cohort($cohort1->id, \context_system::instance());
-        $this->assertObjectNotHasAttribute('customfields', $result);
+        $result = cohort_get_cohort($cohort1->id, $coursectx);
+        $this->assertObjectNotHasProperty('customfields', $result);
 
         // Test cohort_get_cohorts.
         $result = cohort_get_cohorts(\context_system::instance()->id, 0, 25, '', true);
         $this->assertEquals(2, $result['totalcohorts']);
         $this->assertEquals(2, $result['allcohorts']);
         foreach ($result['cohorts'] as $cohort) {
-            $this->assertObjectHasAttribute('customfields', $cohort);
+            $this->assertObjectHasProperty('customfields', $cohort);
             $this->assertCount(1, $cohort->customfields);
             $field = reset($cohort->customfields);
             $this->assertInstanceOf(data_controller::class, $field);
@@ -745,7 +745,7 @@ class lib_test extends \advanced_testcase {
         $this->assertEquals(2, $result['totalcohorts']);
         $this->assertEquals(2, $result['allcohorts']);
         foreach ($result['cohorts'] as $cohort) {
-            $this->assertObjectNotHasAttribute('customfields', $cohort);
+            $this->assertObjectNotHasProperty('customfields', $cohort);
         }
 
         // Test test_cohort_get_all_cohorts.
@@ -753,7 +753,7 @@ class lib_test extends \advanced_testcase {
         $this->assertEquals(2, $result['totalcohorts']);
         $this->assertEquals(2, $result['allcohorts']);
         foreach ($result['cohorts'] as $cohort) {
-            $this->assertObjectHasAttribute('customfields', $cohort);
+            $this->assertObjectHasProperty('customfields', $cohort);
             $this->assertCount(1, $cohort->customfields);
             $field = reset($cohort->customfields);
             $this->assertInstanceOf(data_controller::class, $field);
@@ -771,14 +771,14 @@ class lib_test extends \advanced_testcase {
         $this->assertEquals(2, $result['totalcohorts']);
         $this->assertEquals(2, $result['allcohorts']);
         foreach ($result['cohorts'] as $cohort) {
-            $this->assertObjectNotHasAttribute('customfields', $cohort);
+            $this->assertObjectNotHasProperty('customfields', $cohort);
         }
 
         // Test cohort_get_available_cohorts.
         $result = cohort_get_available_cohorts($coursectx, COHORT_ALL, 0, 25, '', true);
         $this->assertCount(2, $result);
         foreach ($result as $cohort) {
-            $this->assertObjectHasAttribute('customfields', $cohort);
+            $this->assertObjectHasProperty('customfields', $cohort);
             $this->assertCount(1, $cohort->customfields);
             $field = reset($cohort->customfields);
             $this->assertInstanceOf(data_controller::class, $field);
@@ -795,7 +795,7 @@ class lib_test extends \advanced_testcase {
         $result = cohort_get_available_cohorts($coursectx, COHORT_ALL, 0, 25, '');
         $this->assertCount(2, $result);
         foreach ($result as $cohort) {
-            $this->assertObjectNotHasAttribute('customfields', $cohort);
+            $this->assertObjectNotHasProperty('customfields', $cohort);
         }
 
         // Test cohort_get_user_cohorts.
@@ -805,7 +805,7 @@ class lib_test extends \advanced_testcase {
         $result = cohort_get_user_cohorts($user->id, true);
         $this->assertCount(2, $result);
         foreach ($result as $cohort) {
-            $this->assertObjectHasAttribute('customfields', $cohort);
+            $this->assertObjectHasProperty('customfields', $cohort);
             $this->assertCount(1, $cohort->customfields);
             $field = reset($cohort->customfields);
             $this->assertInstanceOf(data_controller::class, $field);
@@ -822,7 +822,7 @@ class lib_test extends \advanced_testcase {
         $result = cohort_get_user_cohorts($user->id);
         $this->assertCount(2, $result);
         foreach ($result as $cohort) {
-            $this->assertObjectNotHasAttribute('customfields', $cohort);
+            $this->assertObjectNotHasProperty('customfields', $cohort);
         }
     }
 
@@ -939,4 +939,35 @@ class lib_test extends \advanced_testcase {
             }
         }
     }
+
+    /**
+     * Test the behaviour of cohort_get_cohort().
+     *
+     * @covers ::cohort_get_cohort
+     */
+    public function test_cohort_get_cohort() {
+        $this->resetAfterTest();
+
+        $cat = $this->getDataGenerator()->create_category();
+        $cat1 = $this->getDataGenerator()->create_category(['parent' => $cat->id]);
+        $cat2 = $this->getDataGenerator()->create_category(['parent' => $cat->id]);
+
+        $course1 = $this->getDataGenerator()->create_course(['category' => $cat1->id, 'shortname' => 'ANON1']);
+        $course2 = $this->getDataGenerator()->create_course(['category' => $cat2->id, 'shortname' => 'ANON2']);
+
+        $cohort1 = $this->getDataGenerator()->create_cohort(['contextid' => \context_coursecat::instance($cat1->id)->id]);
+
+        $result = cohort_get_cohort($cohort1->id, \context_course::instance($course2->id));
+        $this->assertFalse($result);
+
+        $result = cohort_get_cohort($cohort1->id, \context_course::instance($course2->id), true);
+        $this->assertFalse($result);
+
+        $result = cohort_get_cohort($cohort1->id, \context_course::instance($course1->id));
+        $this->assertEquals($cohort1->id, $result->id);
+
+        $result = cohort_get_cohort($cohort1->id, \context_course::instance($course1->id), true);
+        $this->assertEquals($cohort1->id, $result->id);
+    }
+
 }

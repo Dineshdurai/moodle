@@ -692,10 +692,14 @@ function message_output_fragment_processor_settings($args = []) {
         throw new moodle_exception('Must provide a userid');
     }
 
-    $type = $args['type'];
-    $userid = $args['userid'];
+    $type = clean_param($args['type'], PARAM_SAFEDIR);
+    $userid = clean_param($args['userid'], PARAM_INT);
 
     $user = core_user::get_user($userid, '*', MUST_EXIST);
+    if (!core_message_can_edit_message_profile($user)) {
+        throw new moodle_exception('Cannot edit message profile');
+    }
+
     $processor = get_message_processor($type);
     $providers = message_get_providers_for_user($userid);
     $processorwrapper = new stdClass();
@@ -793,13 +797,4 @@ function core_message_user_preferences() {
             return $parts ? join(',', $parts) : 'none';
         });
     return $preferences;
-}
-
-/**
- * Render the message drawer to be included in the top of the body of each page.
- *
- * @return string HTML
- */
-function core_message_standard_after_main_region_html() {
-    return \core_message\helper::render_messaging_widget(true, null, null);
 }

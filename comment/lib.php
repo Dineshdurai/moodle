@@ -506,6 +506,9 @@ class comment {
 
                 $html .= html_writer::start_tag('div', array('class' => 'comment-area'));
                 $html .= html_writer::start_tag('div', array('class' => 'db'));
+                $html .= html_writer::tag('label',
+                        get_string('comment', 'comment'),
+                        ['for' => 'dlg-content-'.$this->cid, 'class' => 'sr-only']);
                 $html .= html_writer::tag('textarea', '', $textareaattrs);
                 $html .= html_writer::end_tag('div'); // .db
 
@@ -540,7 +543,7 @@ class comment {
      *
      * @param  int $page
      * @param  str $sortdirection sort direction, ASC or DESC
-     * @return array
+     * @return array|false
      */
     public function get_comments($page = '', $sortdirection = 'DESC') {
         global $DB, $CFG, $USER, $OUTPUT;
@@ -953,7 +956,7 @@ class comment {
     /**
      * Revoke validate callbacks
      *
-     * @param stdClass $params addtionall parameters need to add to callbacks
+     * @param array $params addtionall parameters need to add to callbacks
      */
     protected function validate($params=array()) {
         foreach ($params as $key=>$value) {
@@ -1071,7 +1074,7 @@ class comment {
     /**
      * Returns the comment area associated with the commentarea
      *
-     * @return stdClass
+     * @return string
      */
     public function get_commentarea() {
         return $this->commentarea;

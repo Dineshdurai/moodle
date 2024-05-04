@@ -281,21 +281,25 @@ if (!defined('PHPUNIT_TEST')) {
     define('PHPUNIT_TEST', false);
 }
 
-// Performance tests needs to always display performance info, even in redirections.
+// Performance tests needs to always display performance info, even in redirections;
+// MDL_PERF_TEST is used in https://github.com/moodlehq/moodle-performance-comparison scripts.
 if (!defined('MDL_PERF_TEST')) {
     define('MDL_PERF_TEST', false);
-} else {
-    // We force the ones we need.
-    if (!defined('MDL_PERF')) {
-        define('MDL_PERF', true);
-    }
-    if (!defined('MDL_PERFDB')) {
-        define('MDL_PERFDB', true);
-    }
-    if (!defined('MDL_PERFTOFOOT')) {
-        define('MDL_PERFTOFOOT', true);
-    }
 }
+// Make sure all MDL_PERF* constants are always defined.
+if (!defined('MDL_PERF')) {
+    define('MDL_PERF', MDL_PERF_TEST);
+}
+if (!defined('MDL_PERFTOFOOT')) {
+    define('MDL_PERFTOFOOT', MDL_PERF_TEST);
+}
+if (!defined('MDL_PERFTOLOG')) {
+    define('MDL_PERFTOLOG', false);
+}
+if (!defined('MDL_PERFINC')) {
+    define('MDL_PERFINC', false);
+}
+// Note that PHPUnit and Behat tests should pass with both MDL_PERF true and false.
 
 // When set to true MUC (Moodle caching) will be disabled as much as possible.
 // A special cache factory will be used to handle this situation and will use special "disabled" equivalents objects.
@@ -372,11 +376,16 @@ if (file_exists("$CFG->dataroot/climaintenance.html")) {
     }
 }
 
-// Sometimes people use different PHP binary for web and CLI, make 100% sure they have the supported PHP version.
-if (version_compare(PHP_VERSION, '5.6.5') < 0) {
+// Some core parts of Moodle may make use of language features not available in older PHP versions.s
+// When this happens as part of our core bootstrap, we can end up having confusing and spurious error
+// messages which are hard to diagnose.
+// This check allows us to insert a very basic check for the absolute minimum version of PHP for the
+// Moodle core to be able to load the environment and error pages.
+// It should only be updated in these circumstances, not with every PHP version.
+if (version_compare(PHP_VERSION, '8.1.0') < 0) {
     $phpversion = PHP_VERSION;
     // Do NOT localise - lang strings would not work here and we CAN NOT move it to later place.
-    echo "Moodle 3.2 or later requires at least PHP 5.6.5 (currently using version $phpversion).\n";
+    echo "Moodle 4.4 or later requires at least PHP 8.1 (currently using version $phpversion).\n";
     echo "Some servers may have multiple PHP versions installed, are you using the correct executable?\n";
     exit(1);
 }
@@ -391,7 +400,6 @@ $CFG->yui2version = '2.9.0';
 $CFG->yui3version = '3.18.1';
 
 // Patching the upstream YUI release.
-// For important information on patching YUI modules, please see http://docs.moodle.org/dev/YUI/Patching.
 // If we need to patch a YUI modules between official YUI releases, the yuipatchlevel will need to be manually
 // incremented here. The module will also need to be listed in the yuipatchedmodules.
 // When upgrading to a subsequent version of YUI, these should be reset back to 0 and an empty array.
@@ -702,6 +710,12 @@ if (isset($CFG->debug)) {
     $CFG->debug = 0;
 }
 $CFG->debugdeveloper = (($CFG->debug & DEBUG_DEVELOPER) === DEBUG_DEVELOPER);
+
+// Set a default value for whether to show exceptions in a pretty format.
+if (!property_exists($CFG, 'debug_developer_use_pretty_exceptions')) {
+    $CFG->debug_developer_use_pretty_exceptions = true;
+
+}
 
 // Find out if PHP configured to display warnings,
 // this is a security problem because some moodle scripts may
@@ -1018,6 +1032,11 @@ if (!empty($CFG->debugvalidators) and !empty($CFG->guestloginbutton)) {
 // can be using in the logfile and stripped out if needed.
 set_access_log_user();
 
+if (CLI_SCRIPT && !empty($CFG->version)) {
+    // Allow auth plugins to optionally authenticate users on the CLI.
+    require_once($CFG->libdir. '/authlib.php');
+    auth_plugin_base::login_cli_admin_user();
+}
 
 // Ensure the urlrewriteclass is setup correctly (to avoid crippling site).
 if (isset($CFG->urlrewriteclass)) {

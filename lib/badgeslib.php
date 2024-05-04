@@ -29,6 +29,9 @@ defined('MOODLE_INTERNAL') || die();
 /* Include required award criteria library. */
 require_once($CFG->dirroot . '/badges/criteria/award_criteria.php');
 
+/* Include required user badge exporter */
+use core_badges\external\user_badge_exporter;
+
 /*
  * Number of records per page.
 */
@@ -149,7 +152,8 @@ function badges_notify_badge_award(badge $badge, $userid, $issued, $filepathhash
     $userfrom->firstname = !empty($CFG->badges_defaultissuername) ? $CFG->badges_defaultissuername : $admin->firstname;
     $userfrom->maildisplay = true;
 
-    $issuedlink = html_writer::link(new moodle_url('/badges/badge.php', array('hash' => $issued)), $badge->name);
+    $badgeurl = new moodle_url('/badges/badge.php', ['hash' => $issued]);
+    $issuedlink = html_writer::link($badgeurl, $badge->name);
     $userto = $DB->get_record('user', array('id' => $userid), '*', MUST_EXIST);
 
     $params = new stdClass();
@@ -167,6 +171,8 @@ function badges_notify_badge_award(badge $badge, $userid, $issued, $filepathhash
     $eventdata->userfrom          = $userfrom;
     $eventdata->userto            = $userto;
     $eventdata->notification      = 1;
+    $eventdata->contexturl        = $badgeurl;
+    $eventdata->contexturlname    = $badge->name;
     $eventdata->subject           = $badge->messagesubject;
     $eventdata->fullmessage       = $plaintext;
     $eventdata->fullmessageformat = FORMAT_HTML;
@@ -209,6 +215,8 @@ function badges_notify_badge_award(badge $badge, $userid, $issued, $filepathhash
         $eventdata->userfrom          = $userfrom;
         $eventdata->userto            = $creator;
         $eventdata->notification      = 1;
+        $eventdata->contexturl        = $badgeurl;
+        $eventdata->contexturlname    = $badge->name;
         $eventdata->subject           = $creatorsubject;
         $eventdata->fullmessage       = html_to_text($creatormessage);
         $eventdata->fullmessageformat = FORMAT_HTML;
@@ -228,7 +236,7 @@ function badges_notify_badge_award(badge $badge, $userid, $issued, $filepathhash
 /**
  * Caclulates date for the next message digest to badge creators.
  *
- * @param in $schedule Type of message schedule BADGE_MESSAGE_DAILY|BADGE_MESSAGE_WEEKLY|BADGE_MESSAGE_MONTHLY.
+ * @param int $schedule Type of message schedule BADGE_MESSAGE_DAILY|BADGE_MESSAGE_WEEKLY|BADGE_MESSAGE_MONTHLY.
  * @return int Timestamp for next cron
  */
 function badges_calculate_message_schedule($schedule) {
@@ -379,6 +387,107 @@ function badges_get_user_badges($userid, $courseid = 0, $page = 0, $perpage = 0,
 }
 
 /**
+ * Get badge by hash.
+ *
+ * @param string $hash
+ * @return object|bool
+ */
+function badges_get_badge_by_hash(string $hash): object|bool {
+    global $DB;
+    $sql = 'SELECT
+                bi.uniquehash,
+                bi.dateissued,
+                bi.userid,
+                bi.dateexpire,
+                bi.id as issuedid,
+                bi.visible,
+                u.email,
+                b.*
+            FROM
+                {badge} b,
+                {badge_issued} bi,
+                {user} u
+            WHERE b.id = bi.badgeid
+                AND u.id = bi.userid
+                AND ' . $DB->sql_compare_text('bi.uniquehash', 40) . ' = ' . $DB->sql_compare_text(':hash', 40);
+    $badge = $DB->get_record_sql($sql, ['hash' => $hash], IGNORE_MISSING);
+    return $badge;
+}
+
+/**
+ * Update badge instance to external functions.
+ *
+ * @param stdClass $badge
+ * @param stdClass $user
+ * @return object
+ */
+function badges_prepare_badge_for_external(stdClass $badge, stdClass $user): object {
+    global $PAGE, $USER;
+    if ($badge->type == BADGE_TYPE_SITE) {
+        $context = context_system::instance();
+    } else {
+        $context = context_course::instance($badge->courseid);
+    }
+    $canconfiguredetails = has_capability('moodle/badges:configuredetails', $context);
+    // If the user is viewing another user's badge and doesn't have the right capability return only part of the data.
+    if ($USER->id != $user->id && !$canconfiguredetails) {
+        $badge = (object) [
+            'id'            => $badge->id,
+            'name'          => $badge->name,
+            'type'          => $badge->type,
+            'description'   => $badge->description,
+            'issuername'    => $badge->issuername,
+            'issuerurl'     => $badge->issuerurl,
+            'issuercontact' => $badge->issuercontact,
+            'uniquehash'    => $badge->uniquehash,
+            'dateissued'    => $badge->dateissued,
+            'dateexpire'    => $badge->dateexpire,
+            'version'       => $badge->version,
+            'language'      => $badge->language,
+            'imageauthorname'  => $badge->imageauthorname,
+            'imageauthoremail' => $badge->imageauthoremail,
+            'imageauthorurl'   => $badge->imageauthorurl,
+            'imagecaption'     => $badge->imagecaption,
+        ];
+    }
+
+    // Create a badge instance to be able to get the endorsement and other info.
+    $badgeinstance = new badge($badge->id);
+    $endorsement   = $badgeinstance->get_endorsement();
+    $alignments    = $badgeinstance->get_alignments();
+    $relatedbadges = $badgeinstance->get_related_badges();
+
+    if (!$canconfiguredetails) {
+        // Return only the properties visible by the user.
+        if (!empty($alignments)) {
+            foreach ($alignments as $alignment) {
+                unset($alignment->targetdescription);
+                unset($alignment->targetframework);
+                unset($alignment->targetcode);
+            }
+        }
+
+        if (!empty($relatedbadges)) {
+            foreach ($relatedbadges as $relatedbadge) {
+                unset($relatedbadge->version);
+                unset($relatedbadge->language);
+                unset($relatedbadge->type);
+            }
+        }
+    }
+
+    $related = [
+        'context'       => $context,
+        'endorsement'   => $endorsement ? $endorsement : null,
+        'alignment'     => $alignments,
+        'relatedbadges' => $relatedbadges,
+    ];
+
+    $exporter = new user_badge_exporter($badge, $related);
+    return $exporter->export($PAGE->get_renderer('core'));
+}
+
+/**
  * Extends the course administration navigation with the Badges page
  *
  * @param navigation_node $coursenode
@@ -489,7 +598,7 @@ function print_badge_image(badge $badge, stdClass $context, $size = 'small') {
  * @param int $badgeid ID of the original badge.
  * @param int $userid ID of badge recipient (optional).
  * @param boolean $pathhash Return file pathhash instead of image url (optional).
- * @return string|url Returns either new file path hash or new file URL
+ * @return string|moodle_url|null Returns either new file path hash or new file URL
  */
 function badges_bake($hash, $badgeid, $userid = 0, $pathhash = false) {
     global $CFG, $USER;
@@ -1112,7 +1221,6 @@ function badges_external_delete_mappings($sitebackpackid) {
  * @param integer $sitebackpackid The site backpack to connect to.
  * @param string $type The type of this remote object.
  * @param string $internalid The id for this object on the Moodle site.
- * @return boolean
  */
 function badges_external_delete_mapping($sitebackpackid, $type, $internalid) {
     global $DB;
@@ -1160,10 +1268,35 @@ function badges_send_verification_email($email, $backpackid, $backpackpassword) 
     $verificationpath = $verificationurl->out(false);
 
     $site = get_site();
-    $args = new stdClass();
-    $args->link = $verificationpath . '?data='. $secret;
-    $args->sitename = $site->fullname;
-    $args->admin = generate_email_signoff();
+    $link = $verificationpath . '?data='. $secret;
+    // Hard-coded button styles, because CSS can't be used in emails.
+    $buttonstyles = [
+        'background-color: #0f6cbf',
+        'border: none',
+        'color: white',
+        'padding: 12px',
+        'text-align: center',
+        'text-decoration: none',
+        'display: inline-block',
+        'font-size: 20px',
+        'font-weight: 800',
+        'margin: 4px 2px',
+        'cursor: pointer',
+        'border-radius: 8px',
+    ];
+    $button = html_writer::start_tag('center') .
+        html_writer::tag(
+            'button',
+            get_string('verifyemail', 'badges'),
+            ['style' => implode(';', $buttonstyles)]) .
+        html_writer::end_tag('center');
+    $args = [
+        'link' => html_writer::link($link, $link),
+        'buttonlink' => html_writer::link($link, $button),
+        'sitename' => $site->fullname,
+        'admin' => generate_email_signoff(),
+        'userfirstname' => $USER->firstname,
+    ];
 
     $messagesubject = get_string('backpackemailverifyemailsubject', 'badges', $site->fullname);
     $messagetext = get_string('backpackemailverifyemailbody', 'badges', $args);
@@ -1337,7 +1470,7 @@ function badges_verify_backpack(int $backpackid) {
  * @param stdClass $backpack The Badgr backpack we are pushing to
  * @param string $type The type of object we are dealing with either Issuer, Assertion OR Badge.
  * @param string $externalid The externalid as provided by the backpack
- * @return string The public URL to access Badgr objects
+ * @return ?string The public URL to access Badgr objects
  */
 function badges_generate_badgr_open_url($backpack, $type, $externalid) {
     if (badges_open_badges_backpack_api($backpack->id) == OPEN_BADGES_V2) {
